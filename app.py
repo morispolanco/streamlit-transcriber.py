@@ -1,44 +1,47 @@
 import streamlit as st
-import whisper
+import openai
 import os
-from tempfile import NamedTemporaryFile
+from io import BytesIO
 
-# Título de la app
-st.title("Transcriptor de Audio en Español")
-st.write("Sube un archivo de audio y obtén su transcripción automática en español.")
+# Configuración de la API (se recomienda guardar la clave en st.secrets)
+openai.api_key = st.secrets["OPENAI_API_KEY"]
 
-# Cargar modelo de Whisper
-@st.cache_resource
-def cargar_modelo():
-    return whisper.load_model("base")
+st.set_page_config(page_title="Transcriptor de Audio", page_icon="🎙️", layout="centered")
 
-modelo = cargar_modelo()
+st.title("🎙️ Transcriptor de Audio en Español")
+st.write("Sube un archivo de audio (mp3, wav, m4a) y obtén la transcripción en texto.")
 
-# Subir archivo
-archivo_audio = st.file_uploader("Sube un archivo de audio", type=["mp3", "wav", "m4a", "flac", "ogg"])
+# Subida de archivo
+audio_file = st.file_uploader("Selecciona un archivo de audio", type=["mp3", "wav", "m4a"])
 
-if archivo_audio is not None:
-    with st.spinner("Transcribiendo..."):
-        # Guardar temporalmente el archivo
-        with NamedTemporaryFile(delete=False, suffix=".mp3") as tmp_file:
-            tmp_file.write(archivo_audio.read())
-            tmp_path = tmp_file.name
+if audio_file is not None:
+    st.audio(audio_file, format="audio/mp3")
 
-        # Transcribir
-        resultado = modelo.transcribe(tmp_path, language="es")
-        texto_transcrito = resultado["text"]
+    if st.button("Transcribir"):
+        with st.spinner("Transcribiendo el audio, por favor espera..."):
+            # Convertimos el archivo a un formato que acepte la API
+            audio_bytes = audio_file.read()
+            audio_stream = BytesIO(audio_bytes)
+            audio_stream.name = audio_file.name
 
-        # Mostrar resultado
-        st.subheader("Transcripción:")
-        st.text_area("Texto transcrito", texto_transcrito, height=300)
+            try:
+                # Llamada a la API de Whisper
+                transcript = openai.Audio.transcriptions.create(
+                    model="gpt-4o-transcribe",  # O puedes usar "whisper-1"
+                    file=audio_stream,
+                    language="es"
+                )
 
-        # Botón para descargar
-        st.download_button(
-            label="Descargar transcripción (.txt)",
-            data=texto_transcrito,
-            file_name="transcripcion.txt",
-            mime="text/plain"
-        )
+                texto = transcript["text"]
+                st.success("✅ Transcripción completada")
+                st.text_area("Texto transcrito:", texto, height=300)
 
-        # Limpiar archivo temporal
-        os.remove(tmp_path)
+                # Botón de descarga
+                st.download_button(
+                    label="⬇️ Descargar Transcripción",
+                    data=texto,
+                    file_name="transcripcion.txt",
+                    mime="text/plain"
+                )
+            except Exception as e:
+                st.error(f"❌ Error al transcribir: {str(e)}")
