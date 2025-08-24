@@ -1,8 +1,8 @@
 import streamlit as st
 from openai import OpenAI
-from io import BytesIO
+import tempfile
 
-# Configuración del cliente (clave guardada en secrets)
+# Configuración del cliente
 client = OpenAI(api_key=st.secrets["OPENAI_API_KEY"])
 
 st.set_page_config(page_title="Transcriptor de Audio", page_icon="🎙️", layout="centered")
@@ -19,23 +19,23 @@ if audio_file is not None:
     if st.button("Transcribir"):
         with st.spinner("Transcribiendo el audio, por favor espera..."):
             try:
-                # Convertir archivo en un stream compatible
-                audio_bytes = audio_file.read()
-                audio_stream = BytesIO(audio_bytes)
-                audio_stream.name = audio_file.name
+                # Guardar archivo temporalmente en disco (mejor compatibilidad con OpenAI)
+                with tempfile.NamedTemporaryFile(delete=False, suffix=".mp3") as tmp:
+                    tmp.write(audio_file.read())
+                    tmp_path = tmp.name
 
-                # Llamada a la API de Whisper
-                transcript = client.audio.transcriptions.create(
-                    model="gpt-4o-transcribe",   # También puedes usar "whisper-1"
-                    file=audio_stream,
-                    language="es"
-                )
+                # Abrir archivo en modo binario y enviarlo a la API
+                with open(tmp_path, "rb") as f:
+                    transcript = client.audio.transcriptions.create(
+                        model="gpt-4o-transcribe",  # o "whisper-1"
+                        file=f,
+                        language="es"
+                    )
 
                 texto = transcript.text
                 st.success("✅ Transcripción completada")
                 st.text_area("Texto transcrito:", texto, height=300)
 
-                # Botón de descarga
                 st.download_button(
                     label="⬇️ Descargar Transcripción",
                     data=texto,
