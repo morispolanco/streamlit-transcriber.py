@@ -181,14 +181,3 @@ Esta aplicación utiliza [Whisper](https://openai.com/research/whisper), un mode
 Whisper ofrece un rendimiento robusto en la transcripción de audio en múltiples idiomas, incluido el español.
 """)
 
-# Información sobre los requisitos
-st.markdown("""
-### Requisitos del sistema:
-- Python 3.8+
-- Streamlit
-- Whisper y sus dependencias (PyTorch, etc.)
-- Espacio de almacenamiento suficiente para el modelo seleccionado (39MB - 1550MB)
-
-Para instalar las dependencias necesarias:
-```bash
-pip install streamlit openai-whisper torch
