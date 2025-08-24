@@ -2,8 +2,7 @@ import streamlit as st
 import os
 import tempfile
 import sys
-import subprocess
-import shutil
+import importlib
 
 # Configuración de la página
 st.set_page_config(
@@ -12,79 +11,35 @@ st.set_page_config(
     layout="wide"
 )
 
-# Función para verificar si ffmpeg está instalado
-def check_ffmpeg():
+# Función para verificar e instalar whisper
+def check_and_install_whisper():
     try:
-        # Verificar si ffmpeg está en el PATH
-        result = subprocess.run(["ffmpeg", "-version"], 
-                              stdout=subprocess.PIPE, 
-                              stderr=subprocess.PIPE,
-                              text=True)
-        if result.returncode == 0:
-            return True
-        return False
-    except FileNotFoundError:
+        import whisper
+        st.success("✅ Whisper está instalado correctamente")
+        return True
+    except ImportError:
+        st.error("❌ Whisper no está instalado. Por favor, instala las dependencias necesarias.")
+        st.code("""
+        # Para instalar Whisper y sus dependencias:
+        pip install openai-whisper
+        
+        # También necesitarás ffmpeg:
+        # En Ubuntu/Debian:
+        sudo apt update && sudo apt install ffmpeg
+        
+        # En macOS con Homebrew:
+        brew install ffmpeg
+        
+        # En Windows, descarga ffmpeg desde https://ffmpeg.org/download.html
+        """)
         return False
 
-# Función para instalar ffmpeg según el sistema operativo
-def install_ffmpeg_instructions():
-    st.error("❌ FFmpeg no está instalado en tu sistema. Es necesario para procesar archivos de audio.")
-    
-    st.markdown("### Instrucciones de instalación según tu sistema operativo:")
-    
-    st.markdown("""
-    #### **Windows:**
-    1. Descarga FFmpeg desde https://ffmpeg.org/download.html
-    2. Extrae el archivo descargado
-    3. Agrega la carpeta `bin` a tu PATH del sistema:
-       - Presiona Win + R, escribe `sysdm.cpl`
-       - Ve a la pestaña "Opciones avanzadas"
-       - Haz clic en "Variables de entorno"
-       - En "Variables del sistema", busca "Path" y haz clic en "Editar"
-       - Agrega la ruta a la carpeta `bin` de FFmpeg (ej: `C:\ffmpeg\bin`)
-    4. Reinicia tu computadora y vuelve a intentar
-    """)
-    
-    st.markdown("""
-    #### **macOS:**
-    ```bash
-    # Usando Homebrew (recomendado)
-    brew install ffmpeg
-    
-    # O usando MacPorts
-    sudo port install ffmpeg
-    ```
-    """)
-    
-    st.markdown("""
-    #### **Linux (Ubuntu/Debian):**
-    ```bash
-    sudo apt update
-    sudo apt install ffmpeg
-    ```
-    
-    #### **Linux (Fedora/CentOS):**
-    ```bash
-    sudo dnf install ffmpeg
-    ```
-    """)
-
-# Verificar ffmpeg al inicio
-if not check_ffmpeg():
-    install_ffmpeg_instructions()
+# Verificar si whisper está instalado
+if not check_and_install_whisper():
     st.stop()
 
-# Ahora continuamos con el resto de la aplicación
-try:
-    import whisper
-    st.success("✅ Whisper está instalado correctamente")
-except ImportError:
-    st.error("❌ Whisper no está instalado. Por favor, instala las dependencias necesarias.")
-    st.code("""
-    # Para instalar Whisper y sus dependencias:
-    pip install openai-whisper torch
-    """)
-    st.stop()
+# Ahora importamos whisper después de verificar que está instalado
+import whisper
 
 # Título y descripción
 st.title("🎤 Transcriptor de Audio en Español")
@@ -138,20 +93,6 @@ def load_whisper_model(model_name: str):
         st.error(f"Error al cargar el modelo: {str(e)}")
         return None
 
-# Función para convertir audio usando pydub (alternativa)
-def convert_audio_with_pydub(input_path, output_path):
-    try:
-        from pydub import AudioSegment
-        audio = AudioSegment.from_file(input_path)
-        audio.export(output_path, format="wav")
-        return True
-    except ImportError:
-        st.error("pydub no está instalado. Intenta instalarlo con: pip install pydub")
-        return False
-    except Exception as e:
-        st.error(f"Error al convertir el audio: {str(e)}")
-        return False
-
 # Área principal para cargar el archivo
 audio_file = st.file_uploader(
     "Sube un archivo de audio (MP3, WAV, M4A, etc.):",
@@ -164,13 +105,10 @@ transcribe_button = st.button("Transcribir Audio", disabled=not audio_file)
 # Procesamiento y transcripción
 if transcribe_button and audio_file:
     # Crear un archivo temporal para guardar el audio subido
-    with tempfile.NamedTemporaryFile(delete=False, suffix=os.path.splitext(audio_file.name)[1]) as temp_file:
+    with tempfile.NamedTemporaryFile(delete=False) as temp_file:
         temp_file.write(audio_file.read())
         temp_file_path = temp_file.name
-    
-    # Crear un archivo temporal para el audio convertido (si es necesario)
-    converted_temp_path = None
-    
+
     try:
         # Cargar el modelo
         model = load_whisper_model(selected_model)
@@ -181,33 +119,13 @@ if transcribe_button and audio_file:
         
         # Mostrar mensaje de procesamiento
         with st.spinner("Transcribiendo audio... Por favor espera."):
-            # Intentar transcribir directamente
-            try:
-                result = model.transcribe(
-                    temp_file_path,
-                    language="es",
-                    verbose=False,
-                    fp16=False
-                )
-            except Exception as e:
-                st.warning(f"Error al procesar el audio directamente: {str(e)}")
-                st.info("Intentando convertir el audio a WAV...")
-                
-                # Crear un archivo temporal para la conversión
-                with tempfile.NamedTemporaryFile(delete=False, suffix=".wav") as converted_file:
-                    converted_temp_path = converted_file.name
-                
-                # Intentar convertir con pydub
-                if convert_audio_with_pydub(temp_file_path, converted_temp_path):
-                    result = model.transcribe(
-                        converted_temp_path,
-                        language="es",
-                        verbose=False,
-                        fp16=False
-                    )
-                else:
-                    st.error("No se pudo procesar el archivo de audio. Asegúrate de que ffmpeg esté instalado correctamente.")
-                    st.stop()
+            # Transcribir el audio
+            result = model.transcribe(
+                temp_file_path,
+                language="es",
+                verbose=False,  # Cambiar a True para ver detalles del proceso
+                fp16=False  # False para compatibilidad con más dispositivos
+            )
         
         # Mostrar la transcripción
         st.subheader("Transcripción:")
@@ -238,11 +156,9 @@ if transcribe_button and audio_file:
         st.error(f"Ocurrió un error durante la transcripción: {str(e)}")
     
     finally:
-        # Eliminar los archivos temporales
+        # Eliminar el archivo temporal
         if os.path.exists(temp_file_path):
             os.unlink(temp_file_path)
-        if converted_temp_path and os.path.exists(converted_temp_path):
-            os.unlink(converted_temp_path)
 
 # Instrucciones adicionales
 with st.expander("Instrucciones de uso"):
@@ -264,3 +180,15 @@ st.markdown("""
 Esta aplicación utiliza [Whisper](https://openai.com/research/whisper), un modelo de reconocimiento de voz desarrollado por OpenAI.
 Whisper ofrece un rendimiento robusto en la transcripción de audio en múltiples idiomas, incluido el español.
 """)
+
+# Información sobre los requisitos
+st.markdown("""
+### Requisitos del sistema:
+- Python 3.8+
+- Streamlit
+- Whisper y sus dependencias (PyTorch, etc.)
+- Espacio de almacenamiento suficiente para el modelo seleccionado (39MB - 1550MB)
+
+Para instalar las dependencias necesarias:
+```bash
+pip install streamlit openai-whisper torch
