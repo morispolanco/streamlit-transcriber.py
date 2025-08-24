@@ -1,8 +1,9 @@
 import streamlit as st
-import whisper
 import os
 import tempfile
-from typing import Optional
+import sys
+import subprocess
+import shutil
 
 # Configuración de la página
 st.set_page_config(
@@ -10,6 +11,80 @@ st.set_page_config(
     page_icon="🎤",
     layout="wide"
 )
+
+# Función para verificar si ffmpeg está instalado
+def check_ffmpeg():
+    try:
+        # Verificar si ffmpeg está en el PATH
+        result = subprocess.run(["ffmpeg", "-version"], 
+                              stdout=subprocess.PIPE, 
+                              stderr=subprocess.PIPE,
+                              text=True)
+        if result.returncode == 0:
+            return True
+        return False
+    except FileNotFoundError:
+        return False
+
+# Función para instalar ffmpeg según el sistema operativo
+def install_ffmpeg_instructions():
+    st.error("❌ FFmpeg no está instalado en tu sistema. Es necesario para procesar archivos de audio.")
+    
+    st.markdown("### Instrucciones de instalación según tu sistema operativo:")
+    
+    st.markdown("""
+    #### **Windows:**
+    1. Descarga FFmpeg desde https://ffmpeg.org/download.html
+    2. Extrae el archivo descargado
+    3. Agrega la carpeta `bin` a tu PATH del sistema:
+       - Presiona Win + R, escribe `sysdm.cpl`
+       - Ve a la pestaña "Opciones avanzadas"
+       - Haz clic en "Variables de entorno"
+       - En "Variables del sistema", busca "Path" y haz clic en "Editar"
+       - Agrega la ruta a la carpeta `bin` de FFmpeg (ej: `C:\ffmpeg\bin`)
+    4. Reinicia tu computadora y vuelve a intentar
+    """)
+    
+    st.markdown("""
+    #### **macOS:**
+    ```bash
+    # Usando Homebrew (recomendado)
+    brew install ffmpeg
+    
+    # O usando MacPorts
+    sudo port install ffmpeg
+    ```
+    """)
+    
+    st.markdown("""
+    #### **Linux (Ubuntu/Debian):**
+    ```bash
+    sudo apt update
+    sudo apt install ffmpeg
+    ```
+    
+    #### **Linux (Fedora/CentOS):**
+    ```bash
+    sudo dnf install ffmpeg
+    ```
+    """)
+
+# Verificar ffmpeg al inicio
+if not check_ffmpeg():
+    install_ffmpeg_instructions()
+    st.stop()
+
+# Ahora continuamos con el resto de la aplicación
+try:
+    import whisper
+    st.success("✅ Whisper está instalado correctamente")
+except ImportError:
+    st.error("❌ Whisper no está instalado. Por favor, instala las dependencias necesarias.")
+    st.code("""
+    # Para instalar Whisper y sus dependencias:
+    pip install openai-whisper torch
+    """)
+    st.stop()
 
 # Título y descripción
 st.title("🎤 Transcriptor de Audio en Español")
@@ -55,9 +130,27 @@ def load_whisper_model(model_name: str):
     """
     Carga el modelo de Whisper y lo cachea para no tener que recargarlo en cada ejecución.
     """
-    with st.spinner(f"Cargando modelo {model_name}... Esto puede tardar unos minutos."):
-        model = whisper.load_model(model_name)
-    return model
+    try:
+        with st.spinner(f"Cargando modelo {model_name}... Esto puede tardar unos minutos."):
+            model = whisper.load_model(model_name)
+        return model
+    except Exception as e:
+        st.error(f"Error al cargar el modelo: {str(e)}")
+        return None
+
+# Función para convertir audio usando pydub (alternativa)
+def convert_audio_with_pydub(input_path, output_path):
+    try:
+        from pydub import AudioSegment
+        audio = AudioSegment.from_file(input_path)
+        audio.export(output_path, format="wav")
+        return True
+    except ImportError:
+        st.error("pydub no está instalado. Intenta instalarlo con: pip install pydub")
+        return False
+    except Exception as e:
+        st.error(f"Error al convertir el audio: {str(e)}")
+        return False
 
 # Área principal para cargar el archivo
 audio_file = st.file_uploader(
@@ -71,23 +164,50 @@ transcribe_button = st.button("Transcribir Audio", disabled=not audio_file)
 # Procesamiento y transcripción
 if transcribe_button and audio_file:
     # Crear un archivo temporal para guardar el audio subido
-    with tempfile.NamedTemporaryFile(delete=False) as temp_file:
+    with tempfile.NamedTemporaryFile(delete=False, suffix=os.path.splitext(audio_file.name)[1]) as temp_file:
         temp_file.write(audio_file.read())
         temp_file_path = temp_file.name
-
+    
+    # Crear un archivo temporal para el audio convertido (si es necesario)
+    converted_temp_path = None
+    
     try:
         # Cargar el modelo
         model = load_whisper_model(selected_model)
         
+        if model is None:
+            st.error("No se pudo cargar el modelo. Por favor, intenta con otro modelo o verifica tu instalación.")
+            st.stop()
+        
         # Mostrar mensaje de procesamiento
         with st.spinner("Transcribiendo audio... Por favor espera."):
-            # Transcribir el audio
-            result = model.transcribe(
-                temp_file_path,
-                language="es",
-                verbose=False,  # Cambiar a True para ver detalles del proceso
-                fp16=False  # False para compatibilidad con más dispositivos
-            )
+            # Intentar transcribir directamente
+            try:
+                result = model.transcribe(
+                    temp_file_path,
+                    language="es",
+                    verbose=False,
+                    fp16=False
+                )
+            except Exception as e:
+                st.warning(f"Error al procesar el audio directamente: {str(e)}")
+                st.info("Intentando convertir el audio a WAV...")
+                
+                # Crear un archivo temporal para la conversión
+                with tempfile.NamedTemporaryFile(delete=False, suffix=".wav") as converted_file:
+                    converted_temp_path = converted_file.name
+                
+                # Intentar convertir con pydub
+                if convert_audio_with_pydub(temp_file_path, converted_temp_path):
+                    result = model.transcribe(
+                        converted_temp_path,
+                        language="es",
+                        verbose=False,
+                        fp16=False
+                    )
+                else:
+                    st.error("No se pudo procesar el archivo de audio. Asegúrate de que ffmpeg esté instalado correctamente.")
+                    st.stop()
         
         # Mostrar la transcripción
         st.subheader("Transcripción:")
@@ -118,9 +238,11 @@ if transcribe_button and audio_file:
         st.error(f"Ocurrió un error durante la transcripción: {str(e)}")
     
     finally:
-        # Eliminar el archivo temporal
+        # Eliminar los archivos temporales
         if os.path.exists(temp_file_path):
             os.unlink(temp_file_path)
+        if converted_temp_path and os.path.exists(converted_temp_path):
+            os.unlink(converted_temp_path)
 
 # Instrucciones adicionales
 with st.expander("Instrucciones de uso"):
