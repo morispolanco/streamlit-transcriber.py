@@ -180,4 +180,3 @@ st.markdown("""
 Esta aplicación utiliza [Whisper](https://openai.com/research/whisper), un modelo de reconocimiento de voz desarrollado por OpenAI.
 Whisper ofrece un rendimiento robusto en la transcripción de audio en múltiples idiomas, incluido el español.
 """)
-
